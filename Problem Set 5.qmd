@@ -1,0 +1,730 @@
+---
+title: "STATS 506 Problem Set 5"
+author: "Lindsey Lin"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(roxygen2)
+```
+
+## **Problem 1 - OOP Programming**
+
+Create a class to represent Wald-style normal approximation Confidence Intervals. Do this using S4.
+
+a\. For the `waldCI` class, define the following:
+
+1.  A constructor, which takes in a confidence level (0,1) and either **a mean and standard error**, or **a lower and upper bound**. This should be a custom constructor, not `new()` or `waldCI()`.
+
+2.  A validator.
+
+3.  A `show` method.
+
+4.  Accessors: `lb`, `ub`, `mean`, `sterr`, `level`.
+
+5.  Setters: `lb`, `ub`, `mean`, `sterr`, `level`. Be sure to validate the resulting `waldCI`.
+
+6.  A `contains` method, returning a logical of whether a value is within a CI.
+
+7.  An `overlap` method, that takes in **two** `waldCI`’s, and returns a logical of whether the two confidence intervals overlap.
+
+8.  `as.numeric` to return `c(lb, ub)`. (Hint: The second argument of `setGeneric` is not needed when an existing s3 function uses the `.Primitive` function.)
+
+9.  `transformCI` which takes in a `function` and a `waldCI`, and returns the transformed `waldCI` object. Warn the user that only monotonic functions make sense.
+
+```{r class_definition}
+setClass("waldCI",
+         slots = c(level = "numeric", 
+                   mean = "numeric",
+                   sterr = "numeric",
+                   lb = "numeric",
+                   ub = "numeric"))
+```
+
+```{r constructor}
+#' @title Construct a Wald-style confidence interval
+#' @description
+#' Create a \code{waldCI} object from either a mean/standard-error pair
+#' or a lower/upper bound pair at a given confidence level.
+#'
+#' @param level Numeric value between 0 and 1.
+#' @param mean Numeric value representing the point estimate (mean).
+#' @param sterr Numeric value representing the standard error of the estimate.
+#' @param lb Numeric value representing the lower bound.
+#' @param ub Numeric value representing the upper bound.
+#'
+#' @details
+#' Supply \emph{exactly one} complete representation:
+#' \itemize{
+#'   \item \strong{(mean, sterr)}: must be finite; \code{sterr >= 0} 
+#'          Bounds are computed as \eqn{mean \pm z_{1-\alpha/2}\,sterr}.
+#'   \item \strong{(lb, ub)}: must be finite with \code{lb <= ub}
+#'         (zero-width intervals allowed). The implied
+#'         \eqn{mean=(lb+ub)/2} and \eqn{sterr=(ub-lb)/(2 z_{1-\alpha/2})}.
+#' }
+#' 
+#' If both representations are provided, the constructor checks if they are
+#' consistent given \code{level}. Internally, validation is run first on the
+#' user-supplied pair and then on the fully derived object, so error messages
+#' point to the primary problem (e.g., \code{lb > ub}, negative \code{sterr}).
+#'
+#' @return A valid \code{waldCI} S4 object with slots \code{level, mean, 
+#' sterr, lb, ub}.
+#'
+#' @examples
+#' # Using mean and standard error
+#' ci1 <- makeWaldCI(0.95, mean = 100, sterr = 15)
+#'
+#' # Using bounds
+#' ci2 <- makeWaldCI(0.95, lb = 70.6, ub = 129.4)
+#'
+#' # Zero-width CI (sterr == 0) is allowed
+#' ci3 <- makeWaldCI(0.95, lb = 3.3, ub = 3.3)
+
+makeWaldCI <- function(level, 
+                       mean = NULL, sterr = NULL, lb = NULL, ub = NULL) {
+  
+  #' helper to convert NULL to NA_real_
+  #' @param x Input value (numeric or NULL)
+  #' @return Numeric value or NA_real_ if input is NULL
+  #' @details
+  #' This function converts NULL inputs to NA_real_ for consistent handling.
+  toNum1 <- function(x) if (is.null(x)) NA_real_ else as.numeric(x)
+  lvl <- as.numeric(level)
+  m <- toNum1(mean)
+  se <- toNum1(sterr)
+  l <- toNum1(lb)
+  u <- toNum1(ub)
+
+  have_mean_se <- !(is.na(m) || is.na(se))
+  have_bounds <- !(is.na(l) || is.na(u))
+
+  if (!have_mean_se && !have_bounds)
+    stop("Please provide either (mean & sterr) or (lb & ub).")
+
+  z <- if (is.finite(lvl)) qnorm((1 + lvl)/2) else NA_real_
+
+  # only (mean, sterr) 
+  if (have_mean_se && !have_bounds) {
+    # validate what user supplied
+    obj <- new("waldCI", 
+               level = lvl, 
+               mean = m, sterr = se, lb = NA_real_, ub = NA_real_)
+    # catches negative/NaN/Inf sterr
+    validObject(obj)                      
+    # derive bounds and revalidate full object
+    obj@lb <- obj@mean - z * obj@sterr
+    obj@ub <- obj@mean + z * obj@sterr
+    validObject(obj)
+    return(obj)
+  }
+
+  # only (lb, ub)
+  if (!have_mean_se && have_bounds) {
+    # validate what user supplied
+    obj <- new("waldCI", 
+               level = lvl, 
+               mean = NA_real_, sterr = NA_real_, lb = l, ub = u)
+    # catches lb>ub, Inf/NaN
+    validObject(obj)                      
+    # derive mean, sterr and revalidate full object
+    obj@mean <- (obj@lb + obj@ub) / 2
+    obj@sterr <- (obj@ub - obj@lb) / (2 * z)
+    validObject(obj)
+    return(obj)
+  }
+
+  # if both pairs supplied, build, enforce consistency by validator 
+  obj <- new("waldCI",
+             level = lvl, mean = m, sterr = se, lb = l, ub = u)
+  validObject(obj)
+  obj
+}
+```
+
+```{r validator}
+#' @title Validator for waldCI Class
+#' @description
+#' Validator function to ensure the integrity of `waldCI` objects.
+#' @param object An object of class `waldCI`.
+#' @return TRUE if the object is valid; otherwise, returns an error message.
+#' @details
+#' This function checks that the `waldCI` object has valid, consistent fields.
+#' It ensures that either (mean & sterr) or (lb & ub) are provided, and that
+#' the values are finite and logically consistent.
+
+setValidity("waldCI", function(object){
+  error <- character(0)
+
+  # level must be scalar numeric, finite, 0<level<1
+  lvl <- object@level
+  
+  if (!is.numeric(lvl) || 
+      length(lvl) != 1L ||
+      is.na(lvl) || 
+      !is.finite(lvl) ||
+      lvl <= 0 || 
+      lvl >= 1) {
+    return("`level` must be a single finite number strictly between 0 and 1.")
+  }
+
+  # which fields are present
+  have_mean <- length(object@mean) == 1L && !is.na(object@mean)
+  have_sterr <- length(object@sterr) == 1L && !is.na(object@sterr)
+  have_lb <- length(object@lb) == 1L && !is.na(object@lb)
+  have_ub <- length(object@ub) == 1L && !is.na(object@ub)
+
+  have_mean_se <- have_mean && have_sterr
+  have_bounds <- have_lb && have_ub
+
+  # completeness 
+  if (!have_mean_se && !have_bounds)
+    error <- c(error, 
+               "Please provide either both (`mean` & `sterr`) or both (`lb` & `ub`).")
+  if (xor(have_mean, have_sterr))
+    error <- c(error, 
+               "Both `mean` and `sterr` must be provided together.")
+  if (xor(have_lb, have_ub))
+    error <- c(error, 
+               "Both `lb` and `ub` must be provided together.")
+  if (length(error)) 
+    return(error)
+
+  # check finiteness only for supplied pair
+  if (have_mean_se) {
+    if (!is.numeric(object@mean) || !is.finite(object@mean))
+      return("`mean` must be a single finite numeric.")
+    if (!is.numeric(object@sterr) || !is.finite(object@sterr))
+      return("`sterr` must be a single finite numeric.")
+    # sterr rule first
+    if (object@sterr < 0)
+      return("`sterr` cannot be negative.")
+  }
+  
+  if (have_bounds) {
+    if (!is.numeric(object@lb) || !is.finite(object@lb))
+      return("`lb` must be finite (no NA/NaN/Inf).")
+    if (!is.numeric(object@ub) || !is.finite(object@ub))
+      return("`ub` must be finite (no NA/NaN/Inf).")
+    # bounds rule first 
+    if (!(object@lb <= object@ub))
+      return("`lb` must be less than or equal to `ub`.")
+  }
+
+  # ensure consistency
+  if (have_mean_se && have_bounds && isTRUE(is.finite(lvl))) {
+    z <- qnorm((1 + lvl)/2)
+    lb_calc <- object@mean - z * object@sterr
+    ub_calc <- object@mean + z * object@sterr
+    tol <- 1e-8
+    if (!isTRUE(all.equal(lb_calc, object@lb, tolerance = tol)) ||
+        !isTRUE(all.equal(ub_calc, object@ub, tolerance = tol))) {
+      return("Inconsistent: (mean, sterr, level) do not match (lb, ub).")
+    }
+  }
+
+  TRUE
+})
+```
+
+```{r show_method}
+#' @title Show Method for waldCI Class
+#' @description
+#' Custom `show` method for displaying `waldCI` objects.
+#' @param object An object of class `waldCI`.
+#' @details
+#' This method prints the confidence interval details, including mean, 
+#' standard error, and bounds. It computes missing bounds if only mean 
+#' and standard error are provided.
+
+setMethod("show", "waldCI", function(object){
+  lvl <- object@level
+  z <- if (is.finite(lvl)) qnorm((1+lvl) / 2) else NA_real_
+  
+  have_mean_se <- (length(object@mean)==1L && !is.na(object@mean)) && 
+                  (length(object@sterr)==1L && !is.na(object@sterr))
+  have_bounds <- (length(object@lb)==1L && !is.na(object@lb)) &&
+                 (length(object@ub)==1L && !is.na(object@ub))
+  
+  if (have_bounds) {
+    lb <- object@lb
+  } else if (have_mean_se) {
+    lb <- object@mean - z * object@sterr
+  } else {
+    lb <- NA_real_
+  }
+  
+  if (have_bounds) {
+    ub <- object@ub
+  } else if (have_mean_se) {
+    ub <- object@mean + z * object@sterr
+  } else {
+    ub <- NA_real_
+  }
+    
+  cat(sprintf("Wald CI (level = %.2f)\n", lvl))
+  cat(sprintf("  mean : %s\n", format(object@mean, digits = 4)))
+  cat(sprintf("  sterr: %s\n", format(object@sterr, digits = 4)))
+  cat(sprintf("  lb   : %s\n", format(lb, digits = 4)))
+  cat(sprintf("  ub   : %s\n", format(ub, digits = 4)))
+  
+  if (is.finite(lb) && is.finite(ub) && lb == ub)
+    cat("  note : zero-width interval (sterr == 0)\n")
+})
+```
+
+```{r accessors}
+#' @title Accessor Methods for waldCI Class
+#' @description
+#' Accessor methods for retrieving components of `waldCI` objects.
+#' @param object An object of class `waldCI`.
+#' @param x An object of class `waldCI`.
+#' @return The requested component of the `waldCI` object.
+#' @details
+#' These methods allow users to access the lower bound, upper bound,
+#' mean, standard error, and confidence level of a `waldCI` object.
+#' They provide a convenient interface for extracting these values.
+#' @rdname waldCI-accessors
+#' @export
+#' @aliases lb,waldCI-method
+#' @aliases ub,waldCI-method
+#' @aliases mean,waldCI-method
+#' @aliases sterr,waldCI-method
+#' @aliases level,waldCI-method
+#' @examples
+#' ci <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
+#' lb(ci)    # Access lower bound
+#' ub(ci)    # Access upper bound
+#' mean(ci)  # Access mean
+#' sterr(ci) # Access standard error
+#' level(ci) # Access confidence level
+
+setGeneric("lb", function(object) standardGeneric("lb"))
+setGeneric("ub", function(object) standardGeneric("ub"))
+setGeneric("mean", function(x,...) standardGeneric("mean")) 
+setGeneric("sterr", function(object) standardGeneric("sterr"))
+setGeneric("level", function(object) standardGeneric("level"))
+
+setMethod("lb", "waldCI", function(object) object@lb)
+setMethod("ub", "waldCI", function(object) object@ub)
+setMethod("mean", "waldCI", function(x, ...) x@mean)
+setMethod("sterr", "waldCI", function(object) object@sterr)
+setMethod("level", "waldCI", function(object) object@level)
+```
+
+```{r setters}
+#' @title Replacement Methods for waldCI Class
+#' @description
+#' Replacement methods for modifying components of `waldCI` objects.
+#' @param object An object of class `waldCI`.
+#' @param value The new value to set for the specified component.
+#' @return The modified `waldCI` object.
+#' @details
+#' These methods allow users to update the lower bound, upper bound,
+#' mean, standard error, and confidence level of a `waldCI` object.
+#' When one component is updated, the related components are recalculated
+#' to maintain consistency.
+#' @rdname waldCI-replacement
+#' @export
+#' @aliases lb<-,waldCI-method
+#' @aliases ub<-,waldCI-method
+#' @aliases mean<-,waldCI-method
+#' @aliases sterr<-,waldCI-method
+#' @aliases level<-,waldCI-method
+#' @examples
+#' ci <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
+#' lb(ci) <- 70.6    # Set new lower bound
+#' ub(ci) <- 129.4   # Set new upper bound
+#' mean(ci) <- 110   # Set new mean
+#' sterr(ci) <- 20    # Set new standard error
+#' level(ci) <- 0.99  # Set new confidence level
+#' ci
+#' show(ci)
+
+setGeneric("lb<-", function(object, value) standardGeneric("lb<-"))
+setGeneric("ub<-", function(object, value) standardGeneric("ub<-"))
+setGeneric("mean<-", function(object, value) standardGeneric("mean<-"))
+setGeneric("sterr<-", function(object, value) standardGeneric("sterr<-"))
+setGeneric("level<-", function(object, value) standardGeneric("level<-"))
+
+setMethod("lb<-", "waldCI", function(object, value) {
+  object@lb <- as.numeric(value)
+  
+  # validate bounds first (avoid recomputing sterr yet)
+  object@mean <- NA_real_
+  object@sterr <- NA_real_
+  validObject(object)  
+  
+  # derive mean/sterr and re-validate
+  if (length(object@ub) == 1L && !is.na(object@ub)) {
+    z <- qnorm((1 + object@level) / 2)
+    object@mean <- (object@lb + object@ub) / 2
+    object@sterr <- (object@ub - object@lb) / (2*z)
+    validObject(object)
+  }
+  object
+})
+
+setMethod("ub<-", "waldCI", function(object, value) {
+  object@ub <- as.numeric(value)
+  
+  # validate bounds first (avoid recomputing sterr yet)
+  object@mean <- NA_real_
+  object@sterr <- NA_real_
+  validObject(object)  
+  
+  # derive mean/sterr and re-validate
+  if (length(object@lb) == 1L && !is.na(object@lb)) {
+    z <- qnorm((1 + object@level) / 2)
+    object@mean <- (object@lb + object@ub) / 2
+    object@sterr <- (object@ub - object@lb) / (2*z)
+    validObject(object)
+  }
+  object
+})
+
+setMethod("mean<-", "waldCI", function(object, value) {
+  object@mean <- as.numeric(value)
+  
+  # validate mean/sterr first (don’t derive bounds yet)
+  object@lb <- NA_real_
+  object@ub <- NA_real_
+  validObject(object)  # catches missing/partial/finite issues on mean/sterr
+  
+  if (length(object@sterr) == 1L && !is.na(object@sterr)) {
+    z <- qnorm((1 + object@level) / 2)
+    object@lb <- object@mean - z*object@sterr
+    object@ub <- object@mean + z*object@sterr
+    validObject(object)
+  }
+  object
+})
+
+setMethod("sterr<-", "waldCI", function(object, value) {
+  object@sterr <- as.numeric(value)
+  
+  # validate mean/sterr first (don’t derive bounds yet)
+  object@lb <- NA_real_
+  object@ub <- NA_real_
+  validObject(object) 
+  
+  if (length(object@mean) == 1L && !is.na(object@mean)) {
+    z <- qnorm((1 + object@level) / 2)
+    object@lb <- object@mean - z*object@sterr
+    object@ub <- object@mean + z*object@sterr
+    validObject(object)
+  }
+  object
+})
+
+setMethod("level<-", "waldCI", function(object, value) {
+  object@level <- as.numeric(value)
+  z <- qnorm((1 + object@level) / 2)
+  
+  # recompute the derived pair 
+  if (length(object@mean) == 1L && !is.na(object@mean) &&
+      length(object@sterr) == 1L && !is.na(object@sterr)) {
+    object@lb <- object@mean - z*object@sterr
+    object@ub <- object@mean + z*object@sterr
+  } else if (length(object@lb) == 1L && !is.na(object@lb) &&
+             length(object@ub) == 1L && !is.na(object@ub)) {
+    object@mean  <- (object@lb + object@ub) / 2
+    object@sterr <- (object@ub - object@lb) / (2*z)
+  }
+  validObject(object)
+  object
+})
+```
+
+```{r contains}
+#' @title Contains Method for waldCI Class
+#' @description
+#' Check if a numeric value is contained within the confidence interval.
+#' @param object An object of class `waldCI`.
+#' @param value A numeric value to check for containment within the interval.
+#' @return A logical value indicating whether the value is within the interval.
+#' @details
+#' The `contains` method checks if the provided numeric value falls within 
+#' the bounds of the confidence interval defined by the `waldCI` object.
+#' It requires that the bounds are finite.
+#' @examples
+#' ci <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
+#' contains(ci, 110)  # Check if 110 is within the CI
+
+setGeneric("contains", function(object, value) standardGeneric("contains"))
+
+setMethod("contains", signature(object="waldCI", value="numeric"),
+  function(object, value) {
+    if (!(length(object@lb) == 1L && 
+          length(object@ub) == 1L &&
+          is.finite(object@lb) && 
+          is.finite(object@ub))) {
+      stop("contains() requires finite bounds.")
+    }
+    
+    v <- as.numeric(value)
+    (v >= object@lb) & (v <= object@ub)
+})
+```
+
+```{r overlap}
+#' @title Overlap Method for waldCI Class
+#' @description
+#' Check if two `waldCI` objects have overlapping confidence intervals.
+#' @param x An object of class `waldCI`.
+#' @param y An object of class `waldCI`.
+#' @return A logical value indicating whether the two intervals overlap.
+#' @details
+#' The `overlap` method checks if the confidence intervals defined by two 
+#' `waldCI` objects overlap. It requires both intervals have finite bounds.
+#' @examples
+#' ci1 <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
+#' ci2 <- makeWaldCI(level = 0.95, mean = 110, sterr = 10)
+#' overlap(ci1, ci2)  # Check if ci1 and ci2 overlap
+
+setGeneric("overlap", function(x, y) standardGeneric("overlap"))
+
+setMethod("overlap", signature(x="waldCI", y="waldCI"),
+  function(x, y) {
+    (length(x@lb)==1L && !is.na(x@lb)) &&
+    (length(x@ub)==1L && !is.na(x@ub)) &&
+    (length(y@lb)==1L && !is.na(y@lb)) &&
+    (length(y@ub)==1L && !is.na(y@ub)) &&
+    (max(x@lb, y@lb) <= min(x@ub, y@ub))
+})
+```
+
+```{r as_numeric}
+#' @title as.numeric Method for waldCI Class
+#' @description
+#' Method to convert a `waldCI` object to a numeric vector.
+#' @param x An object of class `waldCI`.
+#' @return A numeric vector containing the lower and upper bounds of the  interval.
+#' @details
+#' The `as.numeric` method extracts the lower and upper bounds from a `waldCI`
+#' object and returns as a numeric vector with named elements `lb` and `ub`.
+#' @examples
+#' ci <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
+#' as.numeric(ci)  # Convert ci to numeric vector
+
+setMethod("as.numeric", "waldCI", function(x) c(lb = x@lb, ub = x@ub))
+```
+
+```{r transformCI}
+#' @title transformCI Method for waldCI Class
+#' @description
+#' Method to transform a `waldCI` object using a monotonic function.
+#' @param x An object of class `waldCI`.
+#' @param f A monotonic function to apply to the confidence interval bounds.
+#' @return A new `waldCI` object with transformed bounds.
+#' @details
+#' The `transformCI` method applies a monotonic function `f` to the bounds of 
+#' a `waldCI` object. It checks for monotonicity over the interval and adjusts
+#' the bounds accordingly.
+#' @examples
+#' ci <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
+#' log_ci <- transformCI(ci, log)  # Transform ci using the log function
+
+setGeneric("transformCI", function(x, f) standardGeneric("transformCI"))
+
+setMethod("transformCI", signature(x = "waldCI", f = "function"),
+  function(x, f) {
+    warning("Only monotonic functions make sense.")
+    
+    if (length(x@lb) != 1L || 
+        is.na(x@lb) || 
+        length(x@ub) != 1L || 
+        is.na(x@ub)) {
+      stop("transformCI requires finite bounds in the waldCI object.")
+    }
+    
+    L <- x@lb
+    U <- x@ub
+    
+    if (!is.finite(L) || !is.finite(U)) {
+      stop("Bounds must be finite for transformCI.")
+    }
+      
+    pts  <- seq(L, U, length.out = 101)
+    vals <- vapply(pts, function(t) as.numeric(f(t)), numeric(1))
+    
+    if (any(!is.finite(vals))) {
+      stop("`f` must return finite numeric values on [lb, ub].")
+    }
+    
+    # monotonicity check
+    tol <- 1e-10
+    inc_ok <- all(diff(vals) >= -tol)
+    dec_ok <- all(diff(vals) <=  tol)
+    
+    if (!inc_ok && !dec_ok) {
+      stop("`f` is not monotone on [lb, ub]; transformation refused.")
+    }
+    
+    # transform interval, if decreasing, swap endpoints to keep lb <= ub
+    L2 <- f(L)
+    U2 <- f(U)
+    
+    if (dec_ok && (U2 < L2)) {
+      tmp <- L2
+      L2 <- U2
+      U2 <- tmp
+    }
+    
+    makeWaldCI(level = x@level, lb = L2, ub = U2)
+  })
+```
+
+b\. Use your `waldCI` class to create three objects:
+
+-   `ci1`: (17.2, 24.7), 95%
+
+-   `ci2`: mean: 13, standard error: 2.5, 99%
+
+-   `ci3`: (27.43, 39.22), 75%
+
+```{r}
+ci1 <- makeWaldCI(level = 0.95, lb = 17.2, ub = 24.7)
+ci2 <- makeWaldCI(level = 0.99, mean = 13, sterr = 2.5)
+ci3 <- makeWaldCI(level = 0.75, lb = 27.43, ub = 39.22)
+```
+
+```{r}
+ci1
+ci2
+ci3
+as.numeric(ci1)
+as.numeric(ci2)
+as.numeric(ci3)
+lb(ci2)
+ub(ci2)
+mean(ci1)
+sterr(ci3)
+level(ci2)
+lb(ci2) <- 10.5
+mean(ci3) <- 34
+level(ci3) <- .8
+contains(ci1, 17)
+contains(ci3, 44)
+overlap(ci1, ci2)
+eci1 <- transformCI(ci1, sqrt)
+eci1
+mean(transformCI(ci2, log))
+```
+
+c\. Show that your validator **does not allow** the creation of invalid confidence intervals:
+
+-   negative standard error
+
+-   lb \> ub
+
+-   infinite bounds
+
+-   invalid use of the setters
+
+```{r}
+#' @title Helper Function to Test for Expected Failures
+#' @description
+#' Evaluate an expression and summarize whether it ran without error.
+#' @param expr An expression to evaluate (will be \code{force}d).
+#' @return A character scalar:
+#' \itemize{
+#'   \item \code{"PASSED"} if \code{expr} evaluates without error.
+#'   \item \code{"ERROR: <message>"} if evaluating \code{expr} raises an error.
+#' }
+
+fail <- function(expr) {
+  tryCatch({force(expr); "PASSED" },
+           error = function(e) paste("ERROR:", e$message))}
+```
+
+```{r}
+fail(makeWaldCI(0.95, mean = 10, sterr = -1))
+```
+
+```{r negative_sterr}
+ci_valid <- makeWaldCI(0.95, mean = 10, sterr = 1)
+fail(sterr(ci_valid) <- -1)
+```
+
+```{r lb_greater_than_ub}
+fail(makeWaldCI(0.95, lb = 8, ub = 7))
+```
+
+```{r}
+ci_valid <-makeWaldCI(0.95, lb = 7, ub = 8)
+fail(ub(ci_valid) <- 5)
+```
+
+```{r}
+fail(makeWaldCI(0.95, lb = -Inf, ub = 2))
+fail(makeWaldCI(0.95, lb = 1, ub =  Inf))
+```
+
+```{r}
+fail(new("waldCI", 
+         level = 0.95, 
+         mean = NA_real_, sterr = NA_real_,lb = NA_real_, ub = NA_real_))
+```
+
+```{r}
+ci_valid <- makeWaldCI(0.95, mean = 10, sterr = 2)
+fail(lb(ci_valid) <- 20)
+```
+
+Although this is not required, the following chuck shows transformCI does not proceed for non-monotonic mappings. It warns and then raises an error rather than returning a misleading interval. For monotone function it returns the correctly transformed bounds (swapping endpoints if decreasing) while preserving the original confidence level.
+
+```{r}
+#' @title Check Expression with Warnings/Eerrors
+#' @description
+#' Evaluate an expression, print a one-line label, and surface any warnings
+#' and errors in a clean, readable format. 
+#' @param expr An expression to evaluate.
+#' @return Invisibly returns the value of `expr` if it succeeds; 
+#' returns `NULL` on error.
+#' @details
+#' The label printed is the deparsed expression itself. Warnings are printed
+#' as `"WARNING: <message>"` and then muffled; errors are printed as
+#' `"ERROR: <message>"` and the function returns `NULL`.
+
+check <- function(expr) {
+  label <- deparse(substitute(expr))
+
+  withCallingHandlers(
+    tryCatch({
+      value <- eval.parent(substitute(expr))
+      cat(label, "\n")
+      invisible(value)
+    }, error = function(e) {
+      cat(label, "\n   ERROR:", conditionMessage(e), "\n")
+      invisible(NULL)
+    }),
+    warning = function(w) {
+      cat("WARNING:", conditionMessage(w), "\n")
+      invokeRestart("muffleWarning")
+    }
+  )
+}
+```
+
+```{r}
+ci  <- makeWaldCI(0.95, lb = 1,   ub = 4)   # valid base CI
+ci0 <- makeWaldCI(0.95, lb = 3.3, ub = 3.3) # degenerate CI (lb == ub)
+# increasing
+transformCI(ci, exp)
+
+# decreasing, endpoints swapped internally
+transformCI(ci, function(x) -x)
+
+# degenerate interval
+transformCI(ci0, function(x) x^3)
+
+# non-monotone -> error
+check(transformCI(ci, function(x) sin(5*x)))
+
+# non-finite -> error
+check(transformCI(ci, function(x) if (x > 2.5) Inf else x))
+```
+
+Note that there are a lot of choices to be made here. What are you going to store in the class? How are you going to store them (what object types)? How are you going to enforce the function in `transform` being monotonic?
