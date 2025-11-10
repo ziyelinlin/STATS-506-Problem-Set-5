@@ -1,12 +1,16 @@
 ---
 title: "STATS 506 Problem Set 5"
 author: "Lindsey Lin"
-format: pdf
 editor: visual
+format:
+  html:
+    embed-resources: true
 ---
 
 ```{r}
 library(roxygen2)
+library(tidyverse)
+library(plotly)
 ```
 
 ## **Problem 1 - OOP Programming**
@@ -709,8 +713,8 @@ check <- function(expr) {
 ```
 
 ```{r}
-ci  <- makeWaldCI(0.95, lb = 1,   ub = 4)   # valid base CI
-ci0 <- makeWaldCI(0.95, lb = 3.3, ub = 3.3) # degenerate CI (lb == ub)
+ci  <- makeWaldCI(0.95, lb = 1,   ub = 4)   
+ci0 <- makeWaldCI(0.95, lb = 3.3, ub = 3.3) 
 # increasing
 transformCI(ci, exp)
 
@@ -728,3 +732,182 @@ check(transformCI(ci, function(x) if (x > 2.5) Inf else x))
 ```
 
 Note that there are a lot of choices to be made here. What are you going to store in the class? How are you going to store them (what object types)? How are you going to enforce the function in `transform` being monotonic?
+
+## **Problem 2 - plotly**
+
+Repeat problem set 4, question 3 using **plotly**.
+
+```{r}
+covid <- read.csv("https://raw.githubusercontent.com/nytimes/covid-19-data/refs/heads/master/rolling-averages/us-states.csv")
+
+covid$date <- lubridate::ymd(covid$date)
+```
+
+a\. How many major and minor spikes in cases were there?
+
+```{r}
+plot_ly(covid, 
+        x = ~ date, 
+        y = ~ cases_avg, 
+        type = "scatter", 
+        mode = "lines") |>
+  layout(xaxis = list(title = "Date"),
+         yaxis = list(title = "Daily Cases"),
+         title = list(text = "US COVID Daily Cases (7-day avg)"))
+```
+
+Answer: there're 4 major spikes and 3 minor spikes
+
+b\. For the states with the highest and lowest overall rates per population, what differences do you see in their trajectories over time?
+
+Notes:
+
+States began reporting on different dates, so I restricted the time axis to dates when all 50 states were reporting and excluded D.C. and five major territories. For each state I computed a the mean of `cases_avg_per_100k` over the study window as the overall rates per population.
+
+Using the stated rules, the state with the highest overall rate is Rhode Island and the lowest is Maine. I used the line chart to visualize their trajectories. To compare their trajectories, I also overlaid the national median (across states, same exclusions) as a reference line in each panel.
+
+```{r}
+covid_state_level <- covid %>% 
+  filter(!(state %in% c("American Samoa", 
+                        "Guam", 
+                        "Northern Mariana Islands", 
+                        "Puerto Rico", 
+                        "Virgin Islands",
+                        "District of Columbia")))
+
+valid_starting_date <- covid_state_level %>% 
+  group_by(date) %>% 
+  summarize(n_state_reported = n_distinct(state), .groups = "drop") %>% 
+  filter(n_state_reported >= 50) %>% 
+  arrange(date) %>% 
+  slice(1) %>% 
+  pull(date)
+
+state_overall <- covid_state_level %>% 
+  filter(date >= valid_starting_date) %>% 
+  group_by(state) %>% 
+  summarize(overall_rate = mean(cases_avg_per_100k, na.rm = TRUE), .groups = "drop") %>% 
+  arrange(desc(overall_rate))
+
+high_state <- state_overall %>% slice(1) %>% pull(state)
+low_state <- state_overall %>% slice(n()) %>% pull(state)
+
+traj <- covid_state_level %>% 
+  filter(state %in% c(high_state, low_state), date >= valid_starting_date)
+
+nation_median <- covid_state_level %>% 
+  filter(date >= valid_starting_date) %>% 
+  group_by(date) %>% 
+  summarize(us_median = median(cases_avg_per_100k, na.rm = TRUE), .groups = "drop")
+```
+
+```{r}
+# Rhode Island
+p_hi <- plot_ly() |>
+  add_lines(data = subset(traj, state == high_state),  
+            x = ~ date, 
+            y = ~ cases_avg_per_100k,
+            name = high_state) |>
+  add_lines(data = nation_median, 
+            x = ~ date, 
+            y = ~ us_median,
+            name = "US median", 
+            legendgroup = "median",
+            line = list(dash = "dash", 
+                        width = 2, 
+                        color = "brown"))
+
+# Maine
+p_lo <- plot_ly() |>
+  add_lines(data = subset(traj, state == low_state),
+            x = ~ date, 
+            y = ~ cases_avg_per_100k,
+            name = low_state) |>
+  add_lines(data = nation_median,
+            x = ~ date, 
+            y = ~ us_median,
+            name = "US median",
+            legendgroup = "median",     
+            showlegend = FALSE,                         
+            line = list(dash = "dash", 
+                        width = 2, 
+                        color = "brown"))
+
+subplot(p_hi, p_lo, 
+        nrows = 2, 
+        shareX = TRUE, 
+        titleX = TRUE, 
+        titleY = TRUE) |>
+  layout(
+    title = list(
+      text = "Covid-19 Trajectories: States with Highest vs Lowest Overall Rates per 100k", 
+      x = 0.5),
+    legend = list(orientation = "h", 
+                  x = 0.5, y = -0.1, 
+                  xanchor = "center", 
+                  groupclick = "togglegroup"),
+    xaxis  = list(title = NULL),
+    yaxis  = list(title = "Cases per 100k"),
+    yaxis2 = list(title = "Cases per 100k"),
+    annotations = list(
+      list(text = paste0(high_state, " (highest)"),
+           x = 0.48, 
+           y = 1, 
+           xref = "paper", 
+           yref = "paper",
+           xanchor = "center", 
+           yanchor = "top", 
+           showarrow = FALSE,
+           font = list(size = 12)),
+      list(text = paste0(low_state, " (lowest)"),
+           x = 0.5, 
+           y = 0.5, 
+           xref = "paper", 
+           yref = "paper",
+           xanchor = "center", 
+           yanchor = "top", 
+           showarrow = FALSE,
+           font = list(size = 12))
+      )
+  )
+```
+
+Answer:
+
+Rhode Island’s curve shows much higher peaks, especially a very sharp Omicron spike in January 2022, well above the national median. Maine’s peaks are consistently lower and remain closer to the national reference most of the time. The spike in winter 21-22 did not seem to affect Maine, while increasing rates around 10-fold in Rhode Island. Overall, Maine experiences broader, slower rises and declines while Rhode Island exhibits narrow, steep spikes.
+
+c\. Identify, to the best of your ability without a formal test, the first five states to experience Covid in a substantial way.
+
+Notes:
+
+The question can be interpreted as which states had the earliest spikes, and based on the plot in part a, the first spike was between March and May. I defined “substantial” as a 7-day average of cases that is greater than 20.
+
+```{r}
+first_spike <- covid_state_level %>% 
+  filter(year(date) == 2020,
+         month(date) %in% c(3, 4, 5)) %>% 
+  select(state, date, cases_avg_per_100k) %>% 
+  filter(cases_avg_per_100k > 20)
+```
+
+```{r}
+plot_ly(type = "scatter", mode = "lines") |>
+  add_lines(data = first_spike,
+            x = ~ date, 
+            y = ~ cases_avg_per_100k,
+            split = ~ state,                    
+            line = list(width = 1),            
+            hovertemplate = paste("<b>%{customdata}</b><br>",
+                                  "%{x|%b %d, %Y}<br>",
+                                  "%{y:.1f} per 100k<extra></extra>"),
+            customdata = ~ state,               
+            showlegend = FALSE) |>
+  layout(xaxis = list(title = "Month of 2020",
+                      rangeslider = list(visible = TRUE)),  
+         yaxis  = list(title = "COVID cases per 100k"))
+
+```
+
+Answer:
+
+New York, New Jersey, Louisiana, Connecticut, and Massachusetts are first five experiencers.
