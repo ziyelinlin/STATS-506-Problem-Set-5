@@ -911,3 +911,9 @@ plot_ly(type = "scatter", mode = "lines") |>
 Answer:
 
 New York, New Jersey, Louisiana, Connecticut, and Massachusetts are first five experiencers.
+
+**Disclosure**:
+
+In problem 1, ChatGPT helped me draft roxygen2 documentation for the constructor, validator, accessors, setters, and the `show()`, `contains()`, `overlap()`, `as.numeric()`, and `transformCI()` methods. When demonstrating that my validator rejects invalid confidence intervals and that `transformCI()` disallows non-monotonic transforms, it also write `fail()` and `check()` helpers that capture and print expected errors without stopping running the code.
+
+In problem 2, it helped arranging legend below the plot and centering it and showed me how to add a subtitle to the second figure. In the third plot, it helped polish the figure by crafting a `hovertemplate` that shows state, date, and rate in a clean tooltip.
