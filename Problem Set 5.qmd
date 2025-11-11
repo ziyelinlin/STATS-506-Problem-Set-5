@@ -308,7 +308,7 @@ setMethod("show", "waldCI", function(object){
 
 setGeneric("lb", function(object) standardGeneric("lb"))
 setGeneric("ub", function(object) standardGeneric("ub"))
-setGeneric("mean", function(x,...) standardGeneric("mean")) 
+setGeneric("mean", function(x, ...) standardGeneric("mean")) 
 setGeneric("sterr", function(object) standardGeneric("sterr"))
 setGeneric("level", function(object) standardGeneric("level"))
 
@@ -514,7 +514,7 @@ setMethod("overlap", signature(x="waldCI", y="waldCI"),
 #' ci <- makeWaldCI(level = 0.95, mean = 100, sterr = 15)
 #' as.numeric(ci)  # Convert ci to numeric vector
 
-setMethod("as.numeric", "waldCI", function(x) c(lb = x@lb, ub = x@ub))
+setMethod("as.numeric", "waldCI", function(x, ...) c(lb = x@lb, ub = x@ub))
 ```
 
 ```{r transformCI}
